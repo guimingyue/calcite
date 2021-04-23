@@ -87,6 +87,28 @@ Want to learn more about Calcite?
 Watch some presentations and read through some slide decks about
 Calcite, or attend one of the [upcoming talks](#upcoming-talks).
 
+## An introduction to query processing & Apache Calcite
+
+At [Calcite Virtual Meetup](https://www.meetup.com/Apache-Calcite/events/275461117/), January 20, 2021;
+[[summary](https://github.com/zabetak/slides/blob/master/2021/calcite-meetup-january/an-introduction-to-query-processing-and-apache-calcite.md)],
+[[slides](https://github.com/zabetak/slides/blob/master/2021/calcite-meetup-january/an-introduction-to-query-processing-and-apache-calcite.pdf)],
+[[video](https://youtu.be/p1O3E33FIs8)].
+
+## Calcite streaming for event-time semantics
+
+At [Calcite Virtual Meetup](https://www.meetup.com/Apache-Calcite/events/275461117/), January 20, 2021;
+[[video](https://youtu.be/n4NU8J1DlWI)].
+
+## Efficient spatial queries on vanilla databases
+
+At [Calcite Virtual Meetup](https://www.meetup.com/Apache-Calcite/events/275461117/), January 20, 2021;
+[[video](https://youtu.be/6iozdGUL-aw)].
+
+## Apache Calcite integration in Hazelcast In-Memory Data Grid
+
+At [Calcite Virtual Meetup](https://www.meetup.com/Apache-Calcite/events/275461117/), January 20, 2021;
+[[video](https://youtu.be/2cKE4HyhIrc)].
+
 ## Fast federated SQL with Apache Calcite
 
 At [ApacheCon Europe 2019](https://aceu19.apachecon.com/), Berlin, Germany, October 24, 2019;

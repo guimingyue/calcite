@@ -36,6 +36,7 @@ import org.apache.calcite.sql.SqlMatchRecognize;
 import org.apache.calcite.sql.SqlMerge;
 import org.apache.calcite.sql.SqlNode;
 import org.apache.calcite.sql.SqlNodeList;
+import org.apache.calcite.sql.SqlOperator;
 import org.apache.calcite.sql.SqlOperatorTable;
 import org.apache.calcite.sql.SqlSelect;
 import org.apache.calcite.sql.SqlUpdate;
@@ -309,14 +310,17 @@ public interface SqlValidator {
   /**
    * Validates parameters for aggregate function.
    *
-   * @param aggCall     Call to aggregate function
-   * @param filter      Filter ({@code FILTER (WHERE)} clause), or null
-   * @param orderList   Ordering specification ({@code WITHING GROUP} clause),
-   *                    or null
-   * @param scope       Syntactic scope
+   * @param aggCall      Call to aggregate function
+   * @param filter       Filter ({@code FILTER (WHERE)} clause), or null
+   * @param distinctList Distinct specification ({@code WITHIN DISTINCT}
+   *                     clause), or null
+   * @param orderList    Ordering specification ({@code WITHIN GROUP} clause),
+   *                     or null
+   * @param scope        Syntactic scope
    */
   void validateAggregateParams(SqlCall aggCall, @Nullable SqlNode filter,
-      @Nullable SqlNodeList orderList, SqlValidatorScope scope);
+      @Nullable SqlNodeList distinctList, @Nullable SqlNodeList orderList,
+      SqlValidatorScope scope);
 
   /**
    * Validates a COLUMN_LIST parameter.
@@ -655,7 +659,7 @@ public interface SqlValidator {
       List<RelDataType> argTypes);
 
   /**
-   * Handles a call to a function which cannot be resolved. Returns a an
+   * Handles a call to a function which cannot be resolved. Returns an
    * appropriately descriptive error, which caller must throw.
    *
    * @param call               Call
@@ -665,7 +669,7 @@ public interface SqlValidator {
    * @param argNames           Names of arguments, or null if call by position
    */
   CalciteException handleUnresolvedFunction(SqlCall call,
-      SqlFunction unresolvedFunction, List<RelDataType> argTypes,
+      SqlOperator unresolvedFunction, List<RelDataType> argTypes,
       @Nullable List<String> argNames);
 
   /**

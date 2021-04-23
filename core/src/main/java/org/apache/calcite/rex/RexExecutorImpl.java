@@ -76,8 +76,10 @@ public class RexExecutorImpl implements RexExecutor {
       programBuilder.addProject(
           node, "c" + programBuilder.getProjectList().size());
     }
-    final JavaTypeFactoryImpl javaTypeFactory =
-        new JavaTypeFactoryImpl(rexBuilder.getTypeFactory().getTypeSystem());
+    final RelDataTypeFactory typeFactory = rexBuilder.getTypeFactory();
+    final JavaTypeFactory javaTypeFactory = typeFactory instanceof JavaTypeFactory
+        ? (JavaTypeFactory) typeFactory
+        : new JavaTypeFactoryImpl(typeFactory.getTypeSystem());
     final BlockBuilder blockBuilder = new BlockBuilder();
     final ParameterExpression root0_ =
         Expressions.parameter(Object.class, "root0");
@@ -90,7 +92,7 @@ public class RexExecutorImpl implements RexExecutor {
     final RexProgram program = programBuilder.getProgram();
     final List<Expression> expressions =
         RexToLixTranslator.translateProjects(program, javaTypeFactory,
-            conformance, blockBuilder, null, root_, getter, null);
+            conformance, blockBuilder, null, null, root_, getter, null);
     blockBuilder.add(
         Expressions.return_(null,
             Expressions.newArrayInit(Object[].class, expressions)));

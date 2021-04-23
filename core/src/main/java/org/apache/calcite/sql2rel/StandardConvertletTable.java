@@ -172,6 +172,20 @@ public class StandardConvertletTable extends ReflectiveConvertletTable {
                 SqlStdOperatorTable.LIKE.createCall(SqlParserPos.ZERO,
                     call.getOperandList()))));
 
+    // Expand "x NOT ILIKE y" into "NOT (x ILIKE y)"
+    registerOp(SqlLibraryOperators.NOT_ILIKE,
+        (cx, call) -> cx.convertExpression(
+            SqlStdOperatorTable.NOT.createCall(SqlParserPos.ZERO,
+                SqlLibraryOperators.ILIKE.createCall(SqlParserPos.ZERO,
+                    call.getOperandList()))));
+
+    // Expand "x NOT RLIKE y" into "NOT (x RLIKE y)"
+    registerOp(SqlLibraryOperators.NOT_RLIKE,
+        (cx, call) -> cx.convertExpression(
+            SqlStdOperatorTable.NOT.createCall(SqlParserPos.ZERO,
+                SqlLibraryOperators.RLIKE.createCall(SqlParserPos.ZERO,
+                    call.getOperandList()))));
+
     // Expand "x NOT SIMILAR y" into "NOT (x SIMILAR y)"
     registerOp(SqlStdOperatorTable.NOT_SIMILAR_TO,
         (cx, call) -> cx.convertExpression(
@@ -900,6 +914,21 @@ public class StandardConvertletTable extends ReflectiveConvertletTable {
             : operandTypeChecker.getConsistency();
     final List<RexNode> exprs = convertOperands(cx, call, consistency);
     RelDataType type = rexBuilder.deriveReturnType(op, exprs);
+
+    // Expand 'ROW (x0, x1, ...) = ROW (y0, y1, ...)'
+    // to 'x0 = y0 AND x1 = y1 AND ...'
+    if (op.kind == SqlKind.EQUALS) {
+      final RexNode expr0 = RexUtil.removeCast(exprs.get(0));
+      final RexNode expr1 = RexUtil.removeCast(exprs.get(1));
+      if (expr0.getKind() == SqlKind.ROW && expr1.getKind() == SqlKind.ROW) {
+        final RexCall call0 = (RexCall) expr0;
+        final RexCall call1 = (RexCall) expr1;
+        final List<RexNode> eqList = new ArrayList<>();
+        Pair.forEach(call0.getOperands(), call1.getOperands(), (x, y) ->
+            eqList.add(rexBuilder.makeCall(op, x, y)));
+        return RexUtil.composeConjunction(rexBuilder, eqList);
+      }
+    }
     return rexBuilder.makeCall(type, op, RexUtil.flatten(exprs, op));
   }
 

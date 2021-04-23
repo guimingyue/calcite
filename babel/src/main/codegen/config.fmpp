@@ -237,6 +237,7 @@ data: {
       "HOUR"
       "IDENTITY"
 #     "IF" # not a keyword in Calcite
+      "ILIKE"
       "IMMEDIATE"
       "IMMEDIATELY"
       "IMPORT"
@@ -401,6 +402,7 @@ data: {
       "RETURNS"
       "REVOKE"
 #     "RIGHT"
+      "RLIKE"
       "ROLE"
       "ROLLBACK"
 #     "ROLLUP"

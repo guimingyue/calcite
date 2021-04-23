@@ -36,6 +36,8 @@ import org.apache.calcite.rel.type.RelDataType;
 import org.apache.calcite.rel.type.RelDataTypeFactory;
 import org.apache.calcite.rel.type.RelDataTypeSystem;
 import org.apache.calcite.rel.type.RelDataTypeSystemImpl;
+import org.apache.calcite.rex.RexFieldCollation;
+import org.apache.calcite.rex.RexWindowBounds;
 import org.apache.calcite.runtime.FlatLists;
 import org.apache.calcite.runtime.Hook;
 import org.apache.calcite.schema.SchemaPlus;
@@ -54,10 +56,13 @@ import org.apache.calcite.sql.dialect.MssqlSqlDialect;
 import org.apache.calcite.sql.dialect.MysqlSqlDialect;
 import org.apache.calcite.sql.dialect.OracleSqlDialect;
 import org.apache.calcite.sql.dialect.PostgresqlSqlDialect;
+import org.apache.calcite.sql.fun.SqlLibrary;
+import org.apache.calcite.sql.fun.SqlLibraryOperatorTableFactory;
 import org.apache.calcite.sql.fun.SqlStdOperatorTable;
 import org.apache.calcite.sql.parser.SqlParser;
 import org.apache.calcite.sql.type.SqlTypeFactoryImpl;
 import org.apache.calcite.sql.type.SqlTypeName;
+import org.apache.calcite.sql.util.SqlOperatorTables;
 import org.apache.calcite.sql.util.SqlShuttle;
 import org.apache.calcite.sql.validate.SqlConformance;
 import org.apache.calcite.sql2rel.SqlToRelConverter;
@@ -77,11 +82,15 @@ import org.apache.calcite.util.Util;
 
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
+import com.google.common.collect.ImmutableSet;
 
+import org.checkerframework.checker.nullness.qual.Nullable;
 import org.junit.jupiter.api.Test;
 
+import java.util.Collection;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.function.Function;
 import java.util.function.UnaryOperator;
 import java.util.stream.Collectors;
@@ -103,7 +112,7 @@ class RelToSqlConverterTest {
   /** Initiates a test case with a given SQL query. */
   private Sql sql(String sql) {
     return new Sql(CalciteAssert.SchemaSpec.JDBC_FOODMART, sql,
-        CalciteSqlDialect.DEFAULT, SqlParser.Config.DEFAULT,
+        CalciteSqlDialect.DEFAULT, SqlParser.Config.DEFAULT, ImmutableSet.of(),
         UnaryOperator.identity(), null, ImmutableList.of());
   }
 
@@ -114,9 +123,13 @@ class RelToSqlConverterTest {
 
   private static Planner getPlanner(List<RelTraitDef> traitDefs,
       SqlParser.Config parserConfig, SchemaPlus schema,
-      SqlToRelConverter.Config sqlToRelConf, Program... programs) {
+      SqlToRelConverter.Config sqlToRelConf, Collection<SqlLibrary> librarySet,
+      Program... programs) {
     final MockSqlOperatorTable operatorTable =
-        new MockSqlOperatorTable(SqlStdOperatorTable.instance());
+        new MockSqlOperatorTable(
+            SqlOperatorTables.chain(SqlStdOperatorTable.instance(),
+                SqlLibraryOperatorTableFactory.INSTANCE
+                    .getOperatorTable(librarySet)));
     MockSqlOperatorTable.addRamp(operatorTable);
     final FrameworkConfig config = Frameworks.newConfigBuilder()
         .parserConfig(parserConfig)
@@ -293,6 +306,47 @@ class RelToSqlConverterTest {
         + "FROM \"foodmart\".\"product\"\n"
         + "WHERE \"net_weight\" <> 10 OR \"net_weight\" IS NULL";
     sql(query).ok(expected);
+  }
+
+  /** Test case for
+   * <a href="https://issues.apache.org/jira/browse/CALCITE-4449">[CALCITE-4449]
+   * Calcite generates incorrect SQL for Sarg 'x IS NULL OR x NOT IN
+   * (1, 2)'</a>. */
+  @Test void testSelectWhereNotIn() {
+    final Function<RelBuilder, RelNode> relFn = b -> b
+        .scan("EMP")
+        .filter(
+            b.or(b.isNull(b.field("COMM")),
+                b.not(b.in(b.field("COMM"), b.literal(1), b.literal(2)))))
+        .build();
+    final String expected = "SELECT *\n"
+        + "FROM \"scott\".\"EMP\"\n"
+        + "WHERE \"COMM\" IS NULL OR \"COMM\" NOT IN (1, 2)";
+    relFn(relFn).ok(expected);
+  }
+
+  @Test void testSelectWhereNotEquals() {
+    final Function<RelBuilder, RelNode> relFn = b -> b
+        .scan("EMP")
+        .filter(
+            b.or(b.isNull(b.field("COMM")),
+                b.not(b.in(b.field("COMM"), b.literal(1)))))
+        .build();
+    final String expected = "SELECT *\n"
+        + "FROM \"scott\".\"EMP\"\n"
+        + "WHERE \"COMM\" IS NULL OR \"COMM\" <> 1";
+    relFn(relFn).ok(expected);
+  }
+
+  @Test void testSelectWhereIn() {
+    final Function<RelBuilder, RelNode> relFn = b -> b
+        .scan("EMP")
+        .filter(b.in(b.field("COMM"), b.literal(1), b.literal(2)))
+        .build();
+    final String expected = "SELECT *\n"
+        + "FROM \"scott\".\"EMP\"\n"
+        + "WHERE \"COMM\" IN (1, 2)";
+    relFn(relFn).ok(expected);
   }
 
   @Test void testSelectQueryWithWhereClauseOfBasicOperators() {
@@ -707,7 +761,8 @@ class RelToSqlConverterTest {
    * <a href="https://issues.apache.org/jira/browse/CALCITE-1174">[CALCITE-1174]
    * When generating SQL, translate SUM0(x) to COALESCE(SUM(x), 0)</a>. */
   @Test void testSum0BecomesCoalesce() {
-    final Function<RelBuilder, RelNode> fn = b -> b.scan("EMP")
+    final Function<RelBuilder, RelNode> relFn = b -> b
+        .scan("EMP")
         .aggregate(b.groupKey(),
             b.aggregateCall(SqlStdOperatorTable.SUM0, b.field(3))
                 .as("s"))
@@ -716,7 +771,7 @@ class RelToSqlConverterTest {
         + "FROM `scott`.`EMP`";
     final String expectedPostgresql = "SELECT COALESCE(SUM(\"MGR\"), 0) AS \"s\"\n"
         + "FROM \"scott\".\"EMP\"";
-    relFn(fn)
+    relFn(relFn)
         .withPostgresql()
         .ok(expectedPostgresql)
         .withMysql()
@@ -780,6 +835,50 @@ class RelToSqlConverterTest {
     assertThat(toSql(root), isLinux(expectedSql));
   }
 
+  /** Test case for
+   * <a href="https://issues.apache.org/jira/browse/CALCITE-4491">[CALCITE-4491]
+   * Aggregation of window function produces invalid SQL for PostgreSQL</a>. */
+  @Test void testAggregatedWindowFunction() {
+    final Function<RelBuilder, RelNode> relFn = b -> b
+        .scan("EMP")
+        .project(b.field("SAL"))
+        .project(
+            b.alias(
+                b.getRexBuilder().makeOver(
+                    b.getTypeFactory().createSqlType(SqlTypeName.INTEGER),
+                    SqlStdOperatorTable.RANK, ImmutableList.of(),
+                    ImmutableList.of(),
+                    ImmutableList.of(
+                        new RexFieldCollation(b.field("SAL"),
+                            ImmutableSet.of())),
+                    RexWindowBounds.UNBOUNDED_PRECEDING,
+                    RexWindowBounds.UNBOUNDED_FOLLOWING,
+                    true, true, false, false, false),
+                "rank"))
+        .as("t")
+        .aggregate(b.groupKey(),
+            b.count(b.field("t", "rank")).distinct().as("c"))
+        .filter(
+            b.call(SqlStdOperatorTable.GREATER_THAN_OR_EQUAL,
+                b.field("c"), b.literal(10)))
+        .build();
+
+    // PostgreSQL does not not support nested aggregations
+    final String expectedPostgresql =
+        "SELECT COUNT(DISTINCT \"rank\") AS \"c\"\n"
+        + "FROM (SELECT RANK() OVER (ORDER BY \"SAL\") AS \"rank\"\n"
+        + "FROM \"scott\".\"EMP\") AS \"t\"\n"
+        + "HAVING COUNT(DISTINCT \"rank\") >= 10";
+    relFn(relFn).withPostgresql().ok(expectedPostgresql);
+
+    // Oracle does support nested aggregations
+    final String expectedOracle =
+        "SELECT COUNT(DISTINCT RANK() OVER (ORDER BY \"SAL\")) \"c\"\n"
+        + "FROM \"scott\".\"EMP\"\n"
+        + "HAVING COUNT(DISTINCT RANK() OVER (ORDER BY \"SAL\")) >= 10";
+    relFn(relFn).withOracle().ok(expectedOracle);
+  }
+
   @Test void testSemiJoin() {
     final RelBuilder builder = relBuilder();
     final RelNode root = builder
@@ -806,7 +905,7 @@ class RelToSqlConverterTest {
         .scan("EMP")
         .filter(
             builder.call(SqlStdOperatorTable.GREATER_THAN,
-              builder.field(builder.peek().getRowType().getField("EMPNO", false, false).getIndex()),
+              builder.field("EMPNO"),
               builder.literal((short) 10)))
         .join(
             JoinRelType.SEMI, builder.equals(
@@ -877,7 +976,8 @@ class RelToSqlConverterTest {
 
   /** Test case for
    * <a href="https://issues.apache.org/jira/browse/CALCITE-2792">[CALCITE-2792]
-   * Stackoverflow while evaluating filter with large number of OR conditions</a>. */
+   * StackOverflowError while evaluating filter with large number of OR
+   * conditions</a>. */
   @Test void testBalancedBinaryCall() {
     final Function<RelBuilder, RelNode> relFn = b -> b
         .scan("EMP")
@@ -986,7 +1086,7 @@ class RelToSqlConverterTest {
 
   /** Test case for
    * <a href="https://issues.apache.org/jira/browse/CALCITE-3207">[CALCITE-3207]
-   * Fail to convert Join RelNode with like condition to sql statement </a>.
+   * Fail to convert Join RelNode with like condition to sql statement</a>.
    */
   @Test void testJoinWithLikeConditionRel2Sql() {
     final Function<RelBuilder, RelNode> relFn = b -> b
@@ -1517,10 +1617,10 @@ class RelToSqlConverterTest {
    * replaces INs with ORs or sub-queries.
    */
   @Test void testUnparseIn1() {
-    final Function<RelBuilder, RelNode> relFn = b ->
-        b.scan("EMP")
-            .filter(b.in(b.field("DEPTNO"), b.literal(21)))
-            .build();
+    final Function<RelBuilder, RelNode> relFn = b -> b
+        .scan("EMP")
+        .filter(b.in(b.field("DEPTNO"), b.literal(21)))
+        .build();
     final String expectedSql = "SELECT *\n"
         + "FROM \"scott\".\"EMP\"\n"
         + "WHERE \"DEPTNO\" = 21";
@@ -1539,15 +1639,15 @@ class RelToSqlConverterTest {
   }
 
   @Test void testUnparseInStruct1() {
-    final Function<RelBuilder, RelNode> relFn = b ->
-        b.scan("EMP")
-            .filter(
-                b.in(
-                    b.call(SqlStdOperatorTable.ROW,
-                        b.field("DEPTNO"), b.field("JOB")),
-                    b.call(SqlStdOperatorTable.ROW, b.literal(1),
-                        b.literal("PRESIDENT"))))
-            .build();
+    final Function<RelBuilder, RelNode> relFn = b -> b
+        .scan("EMP")
+        .filter(
+            b.in(
+                b.call(SqlStdOperatorTable.ROW,
+                    b.field("DEPTNO"), b.field("JOB")),
+                b.call(SqlStdOperatorTable.ROW, b.literal(1),
+                    b.literal("PRESIDENT"))))
+        .build();
     final String expectedSql = "SELECT *\n"
         + "FROM \"scott\".\"EMP\"\n"
         + "WHERE ROW(\"DEPTNO\", \"JOB\") = ROW(1, 'PRESIDENT')";
@@ -1555,17 +1655,17 @@ class RelToSqlConverterTest {
   }
 
   @Test void testUnparseInStruct2() {
-    final Function<RelBuilder, RelNode> relFn = b ->
-        b.scan("EMP")
-            .filter(
-                b.in(
-                    b.call(SqlStdOperatorTable.ROW,
-                        b.field("DEPTNO"), b.field("JOB")),
-                    b.call(SqlStdOperatorTable.ROW, b.literal(1),
-                        b.literal("PRESIDENT")),
-                    b.call(SqlStdOperatorTable.ROW, b.literal(2),
-                        b.literal("PRESIDENT"))))
-            .build();
+    final Function<RelBuilder, RelNode> relFn = b -> b
+        .scan("EMP")
+        .filter(
+            b.in(
+                b.call(SqlStdOperatorTable.ROW,
+                    b.field("DEPTNO"), b.field("JOB")),
+                b.call(SqlStdOperatorTable.ROW, b.literal(1),
+                    b.literal("PRESIDENT")),
+                b.call(SqlStdOperatorTable.ROW, b.literal(2),
+                    b.literal("PRESIDENT"))))
+        .build();
     final String expectedSql = "SELECT *\n"
         + "FROM \"scott\".\"EMP\"\n"
         + "WHERE ROW(\"DEPTNO\", \"JOB\") IN (ROW(1, 'PRESIDENT'), ROW(2, 'PRESIDENT'))";
@@ -2501,18 +2601,18 @@ class RelToSqlConverterTest {
    * <a href="https://issues.apache.org/jira/browse/CALCITE-4249">[CALCITE-4249]
    * JDBC adapter cannot translate NOT LIKE in join condition</a>. */
   @Test void testJoinOnNotLike() {
-    final Function<RelBuilder, RelNode> relFn = b ->
-        b.scan("EMP")
-            .scan("DEPT")
-            .join(JoinRelType.LEFT,
-                b.and(
-                    b.equals(b.field(2, 0, "DEPTNO"),
-                        b.field(2, 1, "DEPTNO")),
-                    b.not(
-                        b.call(SqlStdOperatorTable.LIKE,
-                            b.field(2, 1, "DNAME"),
-                            b.literal("ACCOUNTING")))))
-            .build();
+    final Function<RelBuilder, RelNode> relFn = b -> b
+        .scan("EMP")
+        .scan("DEPT")
+        .join(JoinRelType.LEFT,
+            b.and(
+                b.equals(b.field(2, 0, "DEPTNO"),
+                    b.field(2, 1, "DEPTNO")),
+                b.not(
+                    b.call(SqlStdOperatorTable.LIKE,
+                        b.field(2, 1, "DNAME"),
+                        b.literal("ACCOUNTING")))))
+        .build();
     final String expectedSql = "SELECT *\n"
         + "FROM \"scott\".\"EMP\"\n"
         + "LEFT JOIN \"scott\".\"DEPT\" "
@@ -3565,6 +3665,47 @@ class RelToSqlConverterTest {
         + "FROM \"foodmart\".\"product\"\n"
         + "WHERE \"product_name\" NOT LIKE 'abc'";
     sql(query).ok(expected);
+  }
+
+  @Test void testIlike() {
+    String query = "select \"product_name\" from \"product\" a "
+        + "where \"product_name\" ilike 'abC'";
+    String expected = "SELECT \"product_name\"\n"
+        + "FROM \"foodmart\".\"product\"\n"
+        + "WHERE \"product_name\" ILIKE 'abC'";
+    sql(query).withLibrary(SqlLibrary.POSTGRESQL).ok(expected);
+  }
+
+  @Test void testRlike() {
+    String query = "select \"product_name\" from \"product\" a "
+        + "where \"product_name\" rlike '.+@.+\\\\..+'";
+    String expectedSpark = "SELECT \"product_name\"\n"
+        + "FROM \"foodmart\".\"product\"\n"
+        + "WHERE \"product_name\" RLIKE '.+@.+\\\\..+'";
+    String expectedHive = "SELECT \"product_name\"\n"
+        + "FROM \"foodmart\".\"product\"\n"
+        + "WHERE \"product_name\" RLIKE '.+@.+\\\\..+'";
+    sql(query)
+        .withLibrary(SqlLibrary.SPARK).ok(expectedSpark)
+        .withLibrary(SqlLibrary.HIVE).ok(expectedHive);
+  }
+
+  @Test void testNotRlike() {
+    String query = "select \"product_name\" from \"product\" a "
+        + "where \"product_name\" not rlike '.+@.+\\\\..+'";
+    String expected = "SELECT \"product_name\"\n"
+        + "FROM \"foodmart\".\"product\"\n"
+        + "WHERE \"product_name\" NOT RLIKE '.+@.+\\\\..+'";
+    sql(query).withLibrary(SqlLibrary.SPARK).ok(expected);
+  }
+
+  @Test void testNotIlike() {
+    String query = "select \"product_name\" from \"product\" a "
+        + "where \"product_name\" not ilike 'abC'";
+    String expected = "SELECT \"product_name\"\n"
+        + "FROM \"foodmart\".\"product\"\n"
+        + "WHERE \"product_name\" NOT ILIKE 'abC'";
+    sql(query).withLibrary(SqlLibrary.POSTGRESQL).ok(expected);
   }
 
   @Test void testMatchRecognizePatternExpression() {
@@ -5560,20 +5701,22 @@ class RelToSqlConverterTest {
     private final SchemaPlus schema;
     private final String sql;
     private final SqlDialect dialect;
-    private final Function<RelBuilder, RelNode> relFn;
+    private final Set<SqlLibrary> librarySet;
+    private final @Nullable Function<RelBuilder, RelNode> relFn;
     private final List<Function<RelNode, RelNode>> transforms;
     private final SqlParser.Config parserConfig;
     private final UnaryOperator<SqlToRelConverter.Config> config;
 
     Sql(CalciteAssert.SchemaSpec schemaSpec, String sql, SqlDialect dialect,
-        SqlParser.Config parserConfig,
+        SqlParser.Config parserConfig, Set<SqlLibrary> librarySet,
         UnaryOperator<SqlToRelConverter.Config> config,
-        Function<RelBuilder, RelNode> relFn,
+        @Nullable Function<RelBuilder, RelNode> relFn,
         List<Function<RelNode, RelNode>> transforms) {
       final SchemaPlus rootSchema = Frameworks.createRootSchema(true);
       this.schema = CalciteAssert.addSchema(rootSchema, schemaSpec);
       this.sql = sql;
       this.dialect = dialect;
+      this.librarySet = librarySet;
       this.relFn = relFn;
       this.transforms = ImmutableList.copyOf(transforms);
       this.parserConfig = parserConfig;
@@ -5581,13 +5724,14 @@ class RelToSqlConverterTest {
     }
 
     Sql(SchemaPlus schema, String sql, SqlDialect dialect,
-        SqlParser.Config parserConfig,
+        SqlParser.Config parserConfig, Set<SqlLibrary> librarySet,
         UnaryOperator<SqlToRelConverter.Config> config,
         Function<RelBuilder, RelNode> relFn,
         List<Function<RelNode, RelNode>> transforms) {
       this.schema = schema;
       this.sql = sql;
       this.dialect = dialect;
+      this.librarySet = librarySet;
       this.relFn = relFn;
       this.transforms = ImmutableList.copyOf(transforms);
       this.parserConfig = parserConfig;
@@ -5595,13 +5739,13 @@ class RelToSqlConverterTest {
     }
 
     Sql dialect(SqlDialect dialect) {
-      return new Sql(schema, sql, dialect, parserConfig, config, relFn,
-          transforms);
+      return new Sql(schema, sql, dialect, parserConfig, librarySet, config,
+          relFn, transforms);
     }
 
     Sql relFn(Function<RelBuilder, RelNode> relFn) {
-      return new Sql(schema, sql, dialect, parserConfig, config, relFn,
-          transforms);
+      return new Sql(schema, sql, dialect, parserConfig, librarySet, config,
+          relFn, transforms);
     }
 
     Sql withCalcite() {
@@ -5723,18 +5867,28 @@ class RelToSqlConverterTest {
     }
 
     Sql parserConfig(SqlParser.Config parserConfig) {
-      return new Sql(schema, sql, dialect, parserConfig, config, relFn,
-          transforms);
+      return new Sql(schema, sql, dialect, parserConfig, librarySet, config,
+          relFn, transforms);
     }
 
     Sql withConfig(UnaryOperator<SqlToRelConverter.Config> config) {
-      return new Sql(schema, sql, dialect, parserConfig, config, relFn,
-          transforms);
+      return new Sql(schema, sql, dialect, parserConfig, librarySet, config,
+          relFn, transforms);
     }
 
-    Sql optimize(final RuleSet ruleSet, final RelOptPlanner relOptPlanner) {
-      return new Sql(schema, sql, dialect, parserConfig, config, relFn,
-          FlatLists.append(transforms, r -> {
+    final Sql withLibrary(SqlLibrary library) {
+      return withLibrarySet(ImmutableSet.of(library));
+    }
+
+    Sql withLibrarySet(Iterable<? extends SqlLibrary> librarySet) {
+      return new Sql(schema, sql, dialect, parserConfig,
+          ImmutableSet.copyOf(librarySet), config, relFn, transforms);
+    }
+
+    Sql optimize(final RuleSet ruleSet,
+        final @Nullable RelOptPlanner relOptPlanner) {
+      final List<Function<RelNode, RelNode>> transforms =
+          FlatLists.append(this.transforms, r -> {
             Program program = Programs.of(ruleSet);
             final RelOptPlanner p =
                 Util.first(relOptPlanner,
@@ -5743,7 +5897,9 @@ class RelToSqlConverterTest {
                             .build()));
             return program.run(p, r, r.getTraitSet(),
                 ImmutableList.of(), ImmutableList.of());
-          }));
+          });
+      return new Sql(schema, sql, dialect, parserConfig, librarySet, config,
+          relFn, transforms);
     }
 
     Sql ok(String expectedQuery) {
@@ -5771,7 +5927,7 @@ class RelToSqlConverterTest {
           final SqlToRelConverter.Config config = this.config.apply(SqlToRelConverter.config()
               .withTrimUnusedFields(false));
           final Planner planner =
-              getPlanner(null, parserConfig, schema, config);
+              getPlanner(null, parserConfig, schema, config, librarySet);
           SqlNode parse = planner.parse(sql);
           SqlNode validate = planner.validate(parse);
           rel = planner.rel(validate).rel;
@@ -5786,8 +5942,8 @@ class RelToSqlConverterTest {
     }
 
     public Sql schema(CalciteAssert.SchemaSpec schemaSpec) {
-      return new Sql(schemaSpec, sql, dialect, parserConfig, config, relFn,
-          transforms);
+      return new Sql(schemaSpec, sql, dialect, parserConfig, librarySet, config,
+          relFn, transforms);
     }
   }
 }

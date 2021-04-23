@@ -55,7 +55,7 @@ public class PrecedenceClimbingParser {
     last = p;
   }
 
-  public Token atom(@Nullable Object o) {
+  public Token atom(Object o) {
     return new Token(Type.ATOM, o, -1, -1);
   }
 
@@ -119,7 +119,7 @@ public class PrecedenceClimbingParser {
       }
       case SPECIAL: {
         Result r = ((SpecialOp) op).special.apply(this, (SpecialOp) op);
-        requireNonNull(r);
+        requireNonNull(r, "r");
         replace(r.replacement, r.first.previous, r.last.next);
         break;
       }
@@ -384,7 +384,7 @@ public class PrecedenceClimbingParser {
       return this;
     }
 
-    public Builder atom(@Nullable Object o) {
+    public Builder atom(Object o) {
       return add(dummy.atom(o));
     }
 

@@ -54,6 +54,7 @@ import org.apache.calcite.sql.SqlUnnestOperator;
 import org.apache.calcite.sql.SqlUtil;
 import org.apache.calcite.sql.SqlValuesOperator;
 import org.apache.calcite.sql.SqlWindow;
+import org.apache.calcite.sql.SqlWithinDistinctOperator;
 import org.apache.calcite.sql.SqlWithinGroupOperator;
 import org.apache.calcite.sql.SqlWriter;
 import org.apache.calcite.sql.type.InferTypes;
@@ -197,6 +198,11 @@ public class SqlStdOperatorTable extends ReflectiveSqlOperatorTable {
 
   /** <code>WITHIN_GROUP</code> operator performs aggregations on ordered data input. */
   public static final SqlWithinGroupOperator WITHIN_GROUP = new SqlWithinGroupOperator();
+
+  /** <code>WITHIN_DISTINCT</code> operator performs aggregations on distinct
+   * data input. */
+  public static final SqlWithinDistinctOperator WITHIN_DISTINCT =
+      new SqlWithinDistinctOperator();
 
   /** {@code CUBE} operator, occurs within {@code GROUP BY} clause
    * or nested within a {@code GROUPING SETS}. */
@@ -1399,22 +1405,24 @@ public class SqlStdOperatorTable extends ReflectiveSqlOperatorTable {
           true);
 
   public static final SqlSpecialOperator NOT_LIKE =
-      new SqlLikeOperator("NOT LIKE", SqlKind.LIKE, true);
+      new SqlLikeOperator("NOT LIKE", SqlKind.LIKE, true, true);
 
   public static final SqlSpecialOperator LIKE =
-      new SqlLikeOperator("LIKE", SqlKind.LIKE, false);
+      new SqlLikeOperator("LIKE", SqlKind.LIKE, false, true);
 
   public static final SqlSpecialOperator NOT_SIMILAR_TO =
-      new SqlLikeOperator("NOT SIMILAR TO", SqlKind.SIMILAR, true);
+      new SqlLikeOperator("NOT SIMILAR TO", SqlKind.SIMILAR, true, true);
 
   public static final SqlSpecialOperator SIMILAR_TO =
-      new SqlLikeOperator("SIMILAR TO", SqlKind.SIMILAR, false);
+      new SqlLikeOperator("SIMILAR TO", SqlKind.SIMILAR, false, true);
 
-  public static final SqlBinaryOperator POSIX_REGEX_CASE_SENSITIVE = new SqlPosixRegexOperator(
-      "POSIX REGEX CASE SENSITIVE", SqlKind.POSIX_REGEX_CASE_SENSITIVE, true, false);
+  public static final SqlBinaryOperator POSIX_REGEX_CASE_SENSITIVE =
+      new SqlPosixRegexOperator("POSIX REGEX CASE SENSITIVE",
+          SqlKind.POSIX_REGEX_CASE_SENSITIVE, true, false);
 
-  public static final SqlBinaryOperator POSIX_REGEX_CASE_INSENSITIVE = new SqlPosixRegexOperator(
-      "POSIX REGEX CASE INSENSITIVE", SqlKind.POSIX_REGEX_CASE_INSENSITIVE, false, false);
+  public static final SqlBinaryOperator POSIX_REGEX_CASE_INSENSITIVE =
+      new SqlPosixRegexOperator("POSIX REGEX CASE INSENSITIVE",
+          SqlKind.POSIX_REGEX_CASE_INSENSITIVE, false, false);
 
   public static final SqlBinaryOperator NEGATED_POSIX_REGEX_CASE_SENSITIVE =
       new SqlPosixRegexOperator("NEGATED POSIX REGEX CASE SENSITIVE",
@@ -2616,6 +2624,24 @@ public class SqlStdOperatorTable extends ReflectiveSqlOperatorTable {
       return GREATER_THAN_OR_EQUAL;
     default:
       return operator;
+    }
+  }
+
+  /** Returns the operator for {@code LIKE} with given case-sensitivity,
+   * optionally negated. */
+  public static SqlOperator like(boolean negated, boolean caseSensitive) {
+    if (negated) {
+      if (caseSensitive) {
+        return NOT_LIKE;
+      } else {
+        return SqlLibraryOperators.NOT_ILIKE;
+      }
+    } else {
+      if (caseSensitive) {
+        return LIKE;
+      } else {
+        return SqlLibraryOperators.ILIKE;
+      }
     }
   }
 

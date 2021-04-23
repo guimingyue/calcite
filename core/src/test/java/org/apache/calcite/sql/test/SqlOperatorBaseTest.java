@@ -3852,6 +3852,43 @@ public abstract class SqlOperatorBaseTest {
     tester.checkBoolean("'ab\ncd\nef' not like '%cde%'", Boolean.TRUE);
   }
 
+  @Test void testRlikeOperator() {
+    checkRlike(SqlLibrary.SPARK);
+    checkRlike(SqlLibrary.HIVE);
+    checkRlikeFails(SqlLibrary.MYSQL);
+    checkRlikeFails(SqlLibrary.ORACLE);
+  }
+
+  void checkRlike(SqlLibrary library) {
+    final SqlTester tester1 = libraryTester(library);
+    tester1.setFor(SqlLibraryOperators.RLIKE, VM_EXPAND);
+    tester1.checkBoolean("'Merrisa@gmail.com' rlike '.+@*\\.com'", Boolean.TRUE);
+    tester1.checkBoolean("'Merrisa@gmail.com' rlike '.com$'", Boolean.TRUE);
+    tester1.checkBoolean("'acbd' rlike '^ac+'", Boolean.TRUE);
+    tester1.checkBoolean("'acb' rlike 'acb|efg'", Boolean.TRUE);
+    tester1.checkBoolean("'acb|efg' rlike 'acb\\|efg'", Boolean.TRUE);
+    tester1.checkBoolean("'Acbd' rlike '^ac+'", Boolean.FALSE);
+    tester1.checkBoolean("'Merrisa@gmail.com' rlike 'Merrisa_'", Boolean.FALSE);
+    tester1.checkBoolean("'abcdef' rlike '%cd%'", Boolean.FALSE);
+
+    tester1.setFor(SqlLibraryOperators.NOT_RLIKE, VM_EXPAND);
+    tester1.checkBoolean("'Merrisagmail' not rlike '.+@*\\.com'", Boolean.TRUE);
+    tester1.checkBoolean("'acbd' not rlike '^ac+'", Boolean.FALSE);
+    tester1.checkBoolean("'acb|efg' not rlike 'acb\\|efg'", Boolean.FALSE);
+    tester1.checkBoolean("'Merrisa@gmail.com' not rlike 'Merrisa_'", Boolean.TRUE);
+  }
+
+  void checkRlikeFails(SqlLibrary library) {
+    final SqlTester tester1 = libraryTester(library);
+    tester1.setFor(SqlLibraryOperators.RLIKE, VM_EXPAND);
+    final String noRlike = "(?s).*No match found for function signature RLIKE";
+    tester1.checkFails("^'Merrisa@gmail.com' rlike '.+@*\\.com'^", noRlike, false);
+    tester1.checkFails("^'acb' rlike 'acb|efg'^", noRlike, false);
+    final String noNotRlike = "(?s).*No match found for function signature NOT RLIKE";
+    tester1.checkFails("^'abcdef' not rlike '%cd%'^", noNotRlike, false);
+    tester1.checkFails("^'Merrisa@gmail.com' not rlike 'Merrisa_'^", noNotRlike, false);
+  }
+
   @Test void testLikeEscape() {
     tester.setFor(SqlStdOperatorTable.LIKE);
     tester.checkBoolean("'a_c' like 'a#_c' escape '#'", Boolean.TRUE);
@@ -3862,6 +3899,19 @@ public abstract class SqlOperatorBaseTest {
     tester.checkBoolean("'a%cde' like 'a\\%c_e' escape '\\'", Boolean.TRUE);
     tester.checkBoolean("'abbc' like 'a%c' escape '\\'", Boolean.TRUE);
     tester.checkBoolean("'abbc' like 'a\\%c' escape '\\'", Boolean.FALSE);
+  }
+
+  @Test void testIlikeEscape() {
+    tester.setFor(SqlLibraryOperators.ILIKE);
+    final SqlTester tester1 = libraryTester(SqlLibrary.POSTGRESQL);
+    tester1.checkBoolean("'a_c' ilike 'a#_C' escape '#'", Boolean.TRUE);
+    tester1.checkBoolean("'axc' ilike 'a#_C' escape '#'", Boolean.FALSE);
+    tester1.checkBoolean("'a_c' ilike 'a\\_C' escape '\\'", Boolean.TRUE);
+    tester1.checkBoolean("'axc' ilike 'a\\_C' escape '\\'", Boolean.FALSE);
+    tester1.checkBoolean("'a%c' ilike 'a\\%C' escape '\\'", Boolean.TRUE);
+    tester1.checkBoolean("'a%cde' ilike 'a\\%C_e' escape '\\'", Boolean.TRUE);
+    tester1.checkBoolean("'abbc' ilike 'a%C' escape '\\'", Boolean.TRUE);
+    tester1.checkBoolean("'abbc' ilike 'a\\%C' escape '\\'", Boolean.FALSE);
   }
 
   @Disabled("[CALCITE-525] Exception-handling in built-in functions")
@@ -3894,6 +3944,48 @@ public abstract class SqlOperatorBaseTest {
     tester.checkBoolean("'ab\ncd\nef' like '%cde%'", Boolean.FALSE);
   }
 
+  @Test void testIlikeOperator() {
+    tester.setFor(SqlLibraryOperators.ILIKE);
+    final String noLike = "No match found for function signature ILIKE";
+    tester.checkFails("^'a' ilike 'b'^", noLike, false);
+    tester.checkFails("^'a' ilike 'b' escape 'c'^", noLike, false);
+    final String noNotLike = "No match found for function signature NOT ILIKE";
+    tester.checkFails("^'a' not ilike 'b'^", noNotLike, false);
+    tester.checkFails("^'a' not ilike 'b' escape 'c'^", noNotLike, false);
+
+    final SqlTester tester1 = libraryTester(SqlLibrary.POSTGRESQL);
+    tester1.checkBoolean("''  ilike ''", Boolean.TRUE);
+    tester1.checkBoolean("'a' ilike 'a'", Boolean.TRUE);
+    tester1.checkBoolean("'a' ilike 'b'", Boolean.FALSE);
+    tester1.checkBoolean("'a' ilike 'A'", Boolean.TRUE);
+    tester1.checkBoolean("'a' ilike 'a_'", Boolean.FALSE);
+    tester1.checkBoolean("'a' ilike '_a'", Boolean.FALSE);
+    tester1.checkBoolean("'a' ilike '%a'", Boolean.TRUE);
+    tester1.checkBoolean("'a' ilike '%A'", Boolean.TRUE);
+    tester1.checkBoolean("'a' ilike '%a%'", Boolean.TRUE);
+    tester1.checkBoolean("'a' ilike '%A%'", Boolean.TRUE);
+    tester1.checkBoolean("'a' ilike 'a%'", Boolean.TRUE);
+    tester1.checkBoolean("'a' ilike 'A%'", Boolean.TRUE);
+    tester1.checkBoolean("'ab'   ilike 'a_'", Boolean.TRUE);
+    tester1.checkBoolean("'ab'   ilike 'A_'", Boolean.TRUE);
+    tester1.checkBoolean("'abc'  ilike 'a_'", Boolean.FALSE);
+    tester1.checkBoolean("'abcd' ilike 'a%'", Boolean.TRUE);
+    tester1.checkBoolean("'abcd' ilike 'A%'", Boolean.TRUE);
+    tester1.checkBoolean("'ab'   ilike '_b'", Boolean.TRUE);
+    tester1.checkBoolean("'ab'   ilike '_B'", Boolean.TRUE);
+    tester1.checkBoolean("'abcd' ilike '_d'", Boolean.FALSE);
+    tester1.checkBoolean("'abcd' ilike '%d'", Boolean.TRUE);
+    tester1.checkBoolean("'abcd' ilike '%D'", Boolean.TRUE);
+    tester1.checkBoolean("'ab\ncd' ilike 'ab%'", Boolean.TRUE);
+    tester1.checkBoolean("'ab\ncd' ilike 'aB%'", Boolean.TRUE);
+    tester1.checkBoolean("'abc\ncd' ilike 'ab%'", Boolean.TRUE);
+    tester1.checkBoolean("'abc\ncd' ilike 'Ab%'", Boolean.TRUE);
+    tester1.checkBoolean("'123\n\n45\n' ilike '%'", Boolean.TRUE);
+    tester1.checkBoolean("'ab\ncd\nef' ilike '%cd%'", Boolean.TRUE);
+    tester1.checkBoolean("'ab\ncd\nef' ilike '%CD%'", Boolean.TRUE);
+    tester1.checkBoolean("'ab\ncd\nef' ilike '%cde%'", Boolean.FALSE);
+  }
+
   /** Test case for
    * <a href="https://issues.apache.org/jira/browse/CALCITE-1898">[CALCITE-1898]
    * LIKE must match '.' (period) literally</a>. */
@@ -3901,6 +3993,15 @@ public abstract class SqlOperatorBaseTest {
     tester.checkBoolean("'abc' like 'a.c'", Boolean.FALSE);
     tester.checkBoolean("'abcde' like '%c.e'", Boolean.FALSE);
     tester.checkBoolean("'abc.e' like '%c.e'", Boolean.TRUE);
+  }
+
+  @Test void testIlikeDot() {
+    tester.setFor(SqlLibraryOperators.ILIKE);
+    final SqlTester tester1 = libraryTester(SqlLibrary.POSTGRESQL);
+    tester1.checkBoolean("'abc' ilike 'a.c'", Boolean.FALSE);
+    tester1.checkBoolean("'abcde' ilike '%c.e'", Boolean.FALSE);
+    tester1.checkBoolean("'abc.e' ilike '%c.e'", Boolean.TRUE);
+    tester1.checkBoolean("'abc.e' ilike '%c.E'", Boolean.TRUE);
   }
 
   @Test void testNotSimilarToOperator() {
@@ -7358,6 +7459,43 @@ public abstract class SqlOperatorBaseTest {
         false);
     t.checkAggFails("^string_agg(x, ',' order by x desc)^", values,
         "No match found for function signature STRING_AGG\\(<CHARACTER>, "
+            + "<CHARACTER>\\)",
+        false);
+  }
+
+  @Test void testGroupConcatFunc() {
+    checkGroupConcatFunc(libraryTester(SqlLibrary.MYSQL));
+    checkGroupConcatFuncFails(libraryTester(SqlLibrary.BIG_QUERY));
+    checkGroupConcatFuncFails(libraryTester(SqlLibrary.POSTGRESQL));
+  }
+
+  private void checkGroupConcatFunc(SqlTester t) {
+    final String[] values = {"'x'", "null", "'yz'"};
+    t.checkAgg("group_concat(x)", values, "x,yz", 0);
+    t.checkAgg("group_concat(x,':')", values, "x:yz", 0);
+    t.checkAgg("group_concat(x,':' order by x)", values, "x:yz", 0);
+    t.checkAgg("group_concat(x order by x separator '|')", values, "x|yz", 0);
+    t.checkAgg("group_concat(x order by char_length(x) desc)", values,
+        "yz,x", 0);
+    t.checkAggFails("^group_concat(x respect nulls order by x desc)^", values,
+        "Cannot specify IGNORE NULLS or RESPECT NULLS following 'GROUP_CONCAT'",
+        false);
+    t.checkAggFails("^group_concat(x order by x desc)^ respect nulls", values,
+        "Cannot specify IGNORE NULLS or RESPECT NULLS following 'GROUP_CONCAT'",
+        false);
+  }
+
+  private void checkGroupConcatFuncFails(SqlTester t) {
+    final String[] values = {"'x'", "'y'"};
+    t.checkAggFails("^group_concat(x)^", values,
+        "No match found for function signature GROUP_CONCAT\\(<CHARACTER>\\)",
+        false);
+    t.checkAggFails("^group_concat(x, ',')^", values,
+        "No match found for function signature GROUP_CONCAT\\(<CHARACTER>, "
+            + "<CHARACTER>\\)",
+        false);
+    t.checkAggFails("^group_concat(x, ',' order by x desc)^", values,
+        "No match found for function signature GROUP_CONCAT\\(<CHARACTER>, "
             + "<CHARACTER>\\)",
         false);
   }
