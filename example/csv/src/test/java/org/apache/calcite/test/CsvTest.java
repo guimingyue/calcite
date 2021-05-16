@@ -360,6 +360,47 @@ class CsvTest {
         .returns("EMPNO=130; GENDER=F; NAME=Alice").ok();
   }
 
+
+  @Test void testFilterableWhereSubQueryIn() throws SQLException {
+    final String sql = "select empno, gender, name from EMPS\n"
+        + " where gender = 'F' and empno > 110 and DEPTNO in (" +
+        "select DEPTNO from DEPTS where NAME='Marketing')";
+    sql("filterable-model", sql)
+        .returns("EMPNO=120; GENDER=F; NAME=Wilma").ok();
+  }
+
+  @Test void testFilterableWhereSubQueryNotIn() throws SQLException {
+    final String sql = "select empno, gender, name from EMPS\n"
+        + " where gender = 'F' and empno > 110 and DEPTNO NOT IN (" +
+        "select DEPTNO from DEPTS where NAME='Marketing')";
+    sql("filterable-model", sql)
+        .returns("EMPNO=120; GENDER=F; NAME=Wilma").ok();
+  }
+
+  @Test void testFilterableWhereSubQueryAgg() throws SQLException {
+    final String sql = "select empno, gender, name from EMPS\n"
+        + " where gender = 'F' and empno > 110 and DEPTNO = (" +
+        "select max(DEPTNO) from DEPTS where NAME='Marketing')";
+    sql("filterable-model", sql)
+        .returns("EMPNO=130; GENDER=F; NAME=Alice").ok();
+  }
+
+  @Test void testFilterableWhereSubQueryLtAll() throws SQLException {
+    final String sql = "select empno, gender, name from EMPS\n"
+        + " where gender = 'F' and empno > 110 and DEPTNO < all (" +
+        "select max(DEPTNO) from DEPTS where NAME='Marketing')";
+    sql("filterable-model", sql)
+        .returns("EMPNO=130; GENDER=F; NAME=Alice").ok();
+  }
+
+  @Test void testFilterableWhereSubQueryExists() throws SQLException {
+    final String sql = "select empno, gender, name from EMPS\n"
+        + " where gender = 'F' and empno > 110 and exists (" +
+        "select * from DEPTS where NAME='Marketing')";
+    sql("filterable-model", sql)
+        .returns("EMPNO=120; GENDER=F; NAME=Wilma").ok();
+  }
+
   /** Filter that can be slightly handled by CsvFilterableTable. */
   @Test void testFilterableWhere3() throws SQLException {
     final String sql = "select empno, gender, name from EMPS\n"

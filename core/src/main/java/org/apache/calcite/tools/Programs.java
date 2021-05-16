@@ -37,8 +37,15 @@ import org.apache.calcite.rel.core.RelFactories;
 import org.apache.calcite.rel.metadata.ChainedRelMetadataProvider;
 import org.apache.calcite.rel.metadata.DefaultRelMetadataProvider;
 import org.apache.calcite.rel.metadata.RelMetadataProvider;
+import org.apache.calcite.rel.rel2sql.RelToSqlConverter;
+import org.apache.calcite.rel.rel2sql.SqlImplementor;
 import org.apache.calcite.rel.rules.CoreRules;
 import org.apache.calcite.rel.rules.JoinPushThroughJoinRule;
+import org.apache.calcite.sql.SqlDialect;
+import org.apache.calcite.sql.SqlExplainFormat;
+import org.apache.calcite.sql.SqlExplainLevel;
+import org.apache.calcite.sql.SqlNode;
+import org.apache.calcite.sql.dialect.MysqlSqlDialect;
 import org.apache.calcite.sql2rel.RelDecorrelator;
 import org.apache.calcite.sql2rel.RelFieldTrimmer;
 import org.apache.calcite.sql2rel.SqlToRelConverter;
@@ -156,7 +163,7 @@ public class Programs {
     return (planner, rel, requiredOutputTraits, materializations, lattices) -> {
       final HepPlanner hepPlanner = new HepPlanner(hepProgram,
           null, noDag, null, RelOptCostImpl.FACTORY);
-
+      String relStr = RelOptUtil.dumpPlan("", rel, SqlExplainFormat.TEXT, SqlExplainLevel.EXPPLAN_ATTRIBUTES);
       List<RelMetadataProvider> list = new ArrayList<>();
       if (metadataProvider != null) {
         list.add(metadataProvider);
@@ -173,7 +180,14 @@ public class Programs {
       rel.getCluster().setMetadataProvider(plannerChain);
 
       hepPlanner.setRoot(rel);
-      return hepPlanner.findBestExp();
+      RelNode bestExp = hepPlanner.findBestExp();
+
+      RelToSqlConverter relToSqlConverter = new RelToSqlConverter(MysqlSqlDialect.DEFAULT);
+      SqlImplementor.Result result = relToSqlConverter.visitRoot(bestExp);
+      SqlNode sqlNode = result.asStatement();
+      String sql = sqlNode.toSqlString(MysqlSqlDialect.DEFAULT).getSql();
+      String bestExpStr = RelOptUtil.dumpPlan("", bestExp, SqlExplainFormat.TEXT, SqlExplainLevel.EXPPLAN_ATTRIBUTES);
+      return bestExp;
     };
   }
 
@@ -249,7 +263,8 @@ public class Programs {
 
   /** Returns the standard program used by Prepare. */
   public static Program standard() {
-    return standard(DefaultRelMetadataProvider.INSTANCE);
+    //return standard(DefaultRelMetadataProvider.INSTANCE);
+    return SUB_QUERY_PROGRAM;
   }
 
   /** Returns the standard program with user metadata provider. */
