@@ -388,7 +388,7 @@ class CsvTest {
   @Test void testFilterableWhereSubQueryLtAll() throws SQLException {
     final String sql = "select empno, gender, name from EMPS\n"
         + " where gender = 'F' and empno > 110 and DEPTNO < all (" +
-        "select max(DEPTNO) from DEPTS where NAME='Marketing')";
+        "select DEPTNO from DEPTS where NAME='Marketing')";
     sql("filterable-model", sql)
         .returns("EMPNO=130; GENDER=F; NAME=Alice").ok();
   }
@@ -397,6 +397,20 @@ class CsvTest {
     final String sql = "select empno, gender, name from EMPS\n"
         + " where gender = 'F' and empno > 110 and exists (" +
         "select * from DEPTS where NAME='Marketing')";
+    sql("filterable-model", sql)
+        .returns("EMPNO=120; GENDER=F; NAME=Wilma").ok();
+  }
+
+  @Test public void testFilterableProjectSubQueryScalar() {
+    final String sql = "select empno, name, (select name from DEPTS where DEPTS.DEPTNO=EMPS.DEPTNO)\n " +
+        "as dpt_name from EMPS where gender = 'F' and empno > 110";
+    sql("filterable-model", sql)
+        .returns("EMPNO=120; GENDER=F; NAME=Wilma").ok();
+  }
+
+  @Test public void testFilterableFilterSubQueryIn() {
+    final String sql = "select empno, name " +
+        " from EMPS where gender = 'F' and empno > 110 and  ";
     sql("filterable-model", sql)
         .returns("EMPNO=120; GENDER=F; NAME=Wilma").ok();
   }
