@@ -263,8 +263,8 @@ public class Programs {
 
   /** Returns the standard program used by Prepare. */
   public static Program standard() {
-    //return standard(DefaultRelMetadataProvider.INSTANCE);
-    return SUB_QUERY_PROGRAM;
+    return standard(DefaultRelMetadataProvider.INSTANCE);
+    // return SUB_QUERY_PROGRAM;
   }
 
   /** Returns the standard program with user metadata provider. */
