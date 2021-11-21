@@ -36,7 +36,6 @@ import org.apache.calcite.sql.fun.SqlStdOperatorTable;
 import org.apache.calcite.sql.fun.SqlSumEmptyIsZeroAggFunction;
 import org.apache.calcite.tools.RelBuilder;
 import org.apache.calcite.tools.RelBuilderFactory;
-import org.apache.calcite.util.ImmutableBeans;
 import org.apache.calcite.util.ImmutableBitSet;
 import org.apache.calcite.util.ImmutableIntList;
 import org.apache.calcite.util.Optionality;
@@ -49,6 +48,7 @@ import com.google.common.collect.Iterables;
 import com.google.common.collect.Lists;
 
 import org.checkerframework.checker.nullness.qual.Nullable;
+import org.immutables.value.Value;
 
 import java.util.ArrayList;
 import java.util.Collection;
@@ -85,6 +85,7 @@ import static java.util.Objects.requireNonNull;
  * @see CoreRules#AGGREGATE_EXPAND_DISTINCT_AGGREGATES
  * @see CoreRules#AGGREGATE_EXPAND_DISTINCT_AGGREGATES_TO_JOIN
  */
+@Value.Enclosing
 public final class AggregateExpandDistinctAggregatesRule
     extends RelRule<AggregateExpandDistinctAggregatesRule.Config>
     implements TransformationRule {
@@ -371,14 +372,15 @@ public final class AggregateExpandDistinctAggregatesRule
                   aggCall.isApproximate(), aggCall.ignoreNulls(),
                   newArgs, -1, aggCall.distinctKeys, aggCall.collation,
                   originalGroupSet.cardinality(), relBuilder.peek(),
-                  aggCall.getType(), aggCall.getName());
+                  null,
+                  aggCall.getName());
         } else {
           newCall =
               AggregateCall.create(aggCall.getAggregation(), false,
                   aggCall.isApproximate(), aggCall.ignoreNulls(),
                   newArgs, -1, aggCall.distinctKeys, aggCall.collation,
                   originalGroupSet.cardinality(),
-                  relBuilder.peek(), aggCall.getType(), aggCall.name);
+                  relBuilder.peek(), null, aggCall.name);
         }
         nonDistinctAggCallProcessedSoFar++;
       }
@@ -400,6 +402,12 @@ public final class AggregateExpandDistinctAggregatesRule
     relBuilder.push(
         aggregate.copy(aggregate.getTraitSet(), relBuilder.build(),
             ImmutableBitSet.of(topGroupSet), null, topAggregateCalls));
+
+    // Add projection node for case: SUM of COUNT(*):
+    // Type of the SUM may be larger than type of COUNT.
+    // CAST to original type must be added.
+    relBuilder.convert(aggregate.getRowType(), true);
+
     return relBuilder;
   }
 
@@ -917,12 +925,12 @@ public final class AggregateExpandDistinctAggregatesRule
     return relBuilder;
   }
 
-       /** Rule configuration. */
+  /** Rule configuration. */
+  @Value.Immutable
   public interface Config extends RelRule.Config {
-    Config DEFAULT = EMPTY
+    Config DEFAULT = ImmutableAggregateExpandDistinctAggregatesRule.Config.of()
         .withOperandSupplier(b ->
-            b.operand(LogicalAggregate.class).anyInputs())
-        .as(Config.class);
+            b.operand(LogicalAggregate.class).anyInputs());
 
     Config JOIN = DEFAULT.withUsingGroupingSets(false);
 
@@ -931,9 +939,9 @@ public final class AggregateExpandDistinctAggregatesRule
     }
 
     /** Whether to use GROUPING SETS, default true. */
-    @ImmutableBeans.Property
-    @ImmutableBeans.BooleanDefault(true)
-    boolean isUsingGroupingSets();
+    @Value.Default default boolean isUsingGroupingSets() {
+      return true;
+    }
 
     /** Sets {@link #isUsingGroupingSets()}. */
     Config withUsingGroupingSets(boolean usingGroupingSets);

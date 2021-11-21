@@ -34,7 +34,6 @@ import org.apache.calcite.sql.fun.SqlStdOperatorTable;
 import org.apache.calcite.tools.RelBuilder;
 import org.apache.calcite.tools.RelBuilderFactory;
 import org.apache.calcite.util.CompositeList;
-import org.apache.calcite.util.ImmutableBeans;
 import org.apache.calcite.util.ImmutableBitSet;
 import org.apache.calcite.util.ImmutableIntList;
 import org.apache.calcite.util.Util;
@@ -43,6 +42,7 @@ import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableSet;
 
 import org.checkerframework.checker.nullness.qual.Nullable;
+import org.immutables.value.Value;
 
 import java.math.BigDecimal;
 import java.util.ArrayList;
@@ -96,6 +96,7 @@ import java.util.function.IntPredicate;
  *
  * @see CoreRules#AGGREGATE_REDUCE_FUNCTIONS
  */
+@Value.Enclosing
 public class AggregateReduceFunctionsRule
     extends RelRule<AggregateReduceFunctionsRule.Config>
     implements TransformationRule {
@@ -832,8 +833,9 @@ public class AggregateReduceFunctionsRule
   }
 
   /** Rule configuration. */
+  @Value.Immutable
   public interface Config extends RelRule.Config {
-    Config DEFAULT = EMPTY.as(Config.class)
+    Config DEFAULT = ImmutableAggregateReduceFunctionsRule.Config.of()
         .withOperandFor(LogicalAggregate.class);
 
     Set<SqlKind> DEFAULT_FUNCTIONS_TO_REDUCE =
@@ -847,11 +849,14 @@ public class AggregateReduceFunctionsRule
       return new AggregateReduceFunctionsRule(this);
     }
 
-    @ImmutableBeans.Property
     @Nullable Set<SqlKind> functionsToReduce();
 
     /** Sets {@link #functionsToReduce}. */
-    Config withFunctionsToReduce(@Nullable Set<SqlKind> functionSet);
+    Config withFunctionsToReduce(@Nullable Iterable<SqlKind> functionSet);
+
+    default Config withFunctionsToReduce(@Nullable Set<SqlKind> functionSet) {
+      return withFunctionsToReduce((Iterable<SqlKind>) functionSet);
+    }
 
     /** Returns the validated set of functions to reduce, or the default set
      * if not specified. */

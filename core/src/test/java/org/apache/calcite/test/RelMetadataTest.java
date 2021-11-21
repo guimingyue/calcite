@@ -66,7 +66,6 @@ import org.apache.calcite.rel.logical.LogicalTableScan;
 import org.apache.calcite.rel.logical.LogicalUnion;
 import org.apache.calcite.rel.logical.LogicalValues;
 import org.apache.calcite.rel.metadata.BuiltInMetadata;
-import org.apache.calcite.rel.metadata.CachingRelMetadataProvider;
 import org.apache.calcite.rel.metadata.ChainedRelMetadataProvider;
 import org.apache.calcite.rel.metadata.DefaultRelMetadataProvider;
 import org.apache.calcite.rel.metadata.JaninoRelMetadataProvider;
@@ -80,6 +79,7 @@ import org.apache.calcite.rel.metadata.RelMdColumnUniqueness;
 import org.apache.calcite.rel.metadata.RelMdUtil;
 import org.apache.calcite.rel.metadata.RelMetadataProvider;
 import org.apache.calcite.rel.metadata.RelMetadataQuery;
+import org.apache.calcite.rel.metadata.UnboundMetadata;
 import org.apache.calcite.rel.rules.CoreRules;
 import org.apache.calcite.rel.type.RelDataType;
 import org.apache.calcite.rel.type.RelDataTypeFactory;
@@ -107,7 +107,6 @@ import org.apache.calcite.test.catalog.MockCatalogReaderSimple;
 import org.apache.calcite.tools.FrameworkConfig;
 import org.apache.calcite.tools.Frameworks;
 import org.apache.calcite.tools.RelBuilder;
-import org.apache.calcite.util.BuiltInMethod;
 import org.apache.calcite.util.Holder;
 import org.apache.calcite.util.ImmutableBitSet;
 import org.apache.calcite.util.ImmutableIntList;
@@ -997,10 +996,6 @@ public class RelMetadataTest extends SqlToRelTestBase {
     RelNode rel =
         convertSql("select deptno, count(*) from emp where deptno > 10 "
             + "group by deptno having count(*) = 0");
-    rel.getCluster().setMetadataProvider(
-        new CachingRelMetadataProvider(
-            rel.getCluster().getMetadataProvider(),
-            rel.getCluster().getPlanner()));
     final RelMetadataQuery mq = rel.getCluster().getMetadataQuery();
     Double result = mq.getSelectivity(rel, null);
     assertThat(result,
@@ -1021,11 +1016,26 @@ public class RelMetadataTest extends SqlToRelTestBase {
     final RelNode rel = convertSql("select * from emp");
     final RelMetadataProvider metadataProvider =
         rel.getCluster().getMetadataProvider();
-    final RelOptPlanner planner = rel.getCluster().getPlanner();
     for (int i = 0; i < iterationCount; i++) {
-      RelMetadataQuery.THREAD_PROVIDERS.set(
-          JaninoRelMetadataProvider.of(
-              new CachingRelMetadataProvider(metadataProvider, planner)));
+      RelMetadataProvider wrappedProvider = new RelMetadataProvider() {
+        @Deprecated // to be removed before 2.0
+        @Override public @Nullable <M extends @Nullable Metadata> UnboundMetadata<M> apply(
+            Class<? extends RelNode> relClass, Class<? extends M> metadataClass) {
+          return metadataProvider.apply(relClass, metadataClass);
+        }
+
+        @Deprecated // to be removed before 2.0
+        @Override public <M extends Metadata> Multimap<Method, MetadataHandler<M>> handlers(
+            MetadataDef<M> def) {
+          return metadataProvider.handlers(def);
+        }
+
+        @Override public List<MetadataHandler<?>> handlers(
+            Class<? extends MetadataHandler<?>> handlerClass) {
+          return metadataProvider.handlers(handlerClass);
+        }
+      };
+      RelMetadataQuery.THREAD_PROVIDERS.set(JaninoRelMetadataProvider.of(wrappedProvider));
       final RelMetadataQuery mq = rel.getCluster().getMetadataQuery();
       final Double result = mq.getRowCount(rel);
       assertThat(result, within(14d, 0.1d));
@@ -1275,6 +1285,16 @@ public class RelMetadataTest extends SqlToRelTestBase {
     assertThat(mq.areColumnsUnique(rel, ImmutableBitSet.of(0, 1)), is(true));
   }
 
+  @Test void testRowUniquenessForSortWithLimit() {
+    final String sql = ""
+        + "select sal\n"
+        + "from emp\n"
+        + "limit 1";
+    final RelNode rel = convertSql(sql);
+    final RelMetadataQuery mq = rel.getCluster().getMetadataQuery();
+    assertThat(mq.areRowsUnique(rel), is(true));
+  }
+
   @Test void testColumnUniquenessForJoinWithConstantColumns() {
     final String sql = ""
         + "select *\n"
@@ -1414,26 +1434,26 @@ public class RelMetadataTest extends SqlToRelTestBase {
   @Test void calcColumnsAreUniqueSimpleCalc() {
     checkGetUniqueKeys("select empno, empno*0 from emp",
         ImmutableSet.of(bitSetOf(0)),
-        convertProjectAsCalc());
+        this::convertProjectAsCalc);
   }
 
   @Test void calcColumnsAreUniqueCalcWithFirstConstant() {
     checkGetUniqueKeys("select 1, empno, empno*0 from emp",
         ImmutableSet.of(bitSetOf(1)),
-        convertProjectAsCalc());
-
+        this::convertProjectAsCalc);
   }
+
   @Test void calcMultipleColumnsAreUniqueCalc() {
     checkGetUniqueKeys("select empno, empno from emp",
         ImmutableSet.of(bitSetOf(0), bitSetOf(1), bitSetOf(0, 1)),
-        convertProjectAsCalc());
+        this::convertProjectAsCalc);
   }
 
   @Test void calcMultipleColumnsAreUniqueCalc2() {
     checkGetUniqueKeys(
         "select a1.empno, a2.empno from emp a1 join emp a2 on (a1.empno=a2.empno)",
         ImmutableSet.of(bitSetOf(0), bitSetOf(1), bitSetOf(0, 1)),
-        convertProjectAsCalc());
+        this::convertProjectAsCalc);
   }
 
   @Test void calcMultipleColumnsAreUniqueCalc3() {
@@ -1444,26 +1464,67 @@ public class RelMetadataTest extends SqlToRelTestBase {
         ImmutableSet.of(
             bitSetOf(0), bitSetOf(0, 1), bitSetOf(0, 1, 2), bitSetOf(0, 2),
             bitSetOf(1), bitSetOf(1, 2), bitSetOf(2)),
-        convertProjectAsCalc());
+        this::convertProjectAsCalc);
   }
 
   @Test void calcColumnsAreNonUniqueCalc() {
     checkGetUniqueKeys("select empno*0 from emp",
         ImmutableSet.of(),
-        convertProjectAsCalc());
+        this::convertProjectAsCalc);
   }
 
-  private Function<String, RelNode> convertProjectAsCalc() {
-    return s -> {
-      Project project = (Project) convertSql(s);
-      RexProgram program = RexProgram.create(
-          project.getInput().getRowType(),
-          project.getProjects(),
-          null,
-          project.getRowType(),
-          project.getCluster().getRexBuilder());
-      return LogicalCalc.create(project.getInput(), program);
-    };
+  private RelNode convertProjectAsCalc(String s) {
+    Project project = (Project) convertSql(s);
+    RexProgram program = RexProgram.create(
+        project.getInput().getRowType(),
+        project.getProjects(),
+        null,
+        project.getRowType(),
+        project.getCluster().getRexBuilder());
+    return LogicalCalc.create(project.getInput(), program);
+  }
+
+  /** Unit test for
+   * {@link org.apache.calcite.rel.metadata.RelMetadataQuery#areRowsUnique(RelNode)}. */
+  @Test void testRowsUnique() {
+    sql("select * from emp")
+        .assertRowsUnique(is(true), "table has primary key");
+    sql("select deptno from emp")
+        .assertRowsUnique(is(false), "table has primary key");
+    sql("select empno from emp")
+        .assertRowsUnique(is(true), "primary key is unique");
+    sql("select empno from emp, dept")
+        .assertRowsUnique(is(false), "cartesian product destroys uniqueness");
+    sql("select empno from emp join dept using (deptno)")
+        .assertRowsUnique(is(true),
+            "many-to-one join does not destroy uniqueness");
+    sql("select empno, job from emp join dept using (deptno) order by job desc")
+        .assertRowsUnique(is(true),
+            "project and sort does not destroy uniqueness");
+    sql("select deptno from emp limit 1")
+        .assertRowsUnique(is(true), "1 row table is always unique");
+    sql("select distinct deptno from emp")
+        .assertRowsUnique(is(true), "distinct table is always unique");
+    sql("select count(*) from emp")
+        .assertRowsUnique(is(true), "grand total is always unique");
+    sql("select count(*) from emp group by deptno")
+        .assertRowsUnique(is(false), "several depts may have same count");
+    sql("select deptno, count(*) from emp group by deptno")
+        .assertRowsUnique(is(true), "group by keys are unique");
+    sql("select deptno, count(*) from emp group by grouping sets ((), (deptno))")
+        .assertRowsUnique(true, is(true),
+            "group by keys are unique and not null");
+    sql("select deptno, count(*) from emp group by grouping sets ((), (deptno))")
+        .assertRowsUnique(false, nullValue(Boolean.class),
+            "is actually unique; TODO: deduce it");
+    sql("select distinct deptno from emp join dept using (deptno)")
+        .assertRowsUnique(is(true), "distinct table is always unique");
+    sql("select deptno from emp union select deptno from dept")
+        .assertRowsUnique(is(true), "set query is always unique");
+    sql("select deptno from emp intersect select deptno from dept")
+        .assertRowsUnique(is(true), "set query is always unique");
+    sql("select deptno from emp except select deptno from dept")
+        .assertRowsUnique(is(true), "set query is always unique");
   }
 
   @Test void testBrokenCustomProviderWithMetadataFactory() {
@@ -1490,9 +1551,10 @@ public class RelMetadataTest extends SqlToRelTestBase {
       assertThat(colType(mq, rel, 0), equalTo("DEPTNO-rel"));
       fail("expected error");
     } catch (IllegalArgumentException e) {
-      final String value = "No handler for method [public abstract java.lang.String "
-          + "org.apache.calcite.test.RelMetadataTest$ColType.getColType(int)] "
-          + "applied to argument of type [interface org.apache.calcite.rel.RelNode]; "
+      final String value = "No handler for method [public abstract "
+          + "java.lang.String org.apache.calcite.test.RelMetadataTest$ColType$Handler.getColType("
+          + "org.apache.calcite.rel.RelNode,org.apache.calcite.rel.metadata.RelMetadataQuery,int)] "
+          + "applied to argument of type [class org.apache.calcite.rel.logical.LogicalFilter]; "
           + "we recommend you create a catch-all (RelNode) handler";
       assertThat(e.getMessage(), is(value));
     }
@@ -1525,13 +1587,15 @@ public class RelMetadataTest extends SqlToRelTestBase {
       fail("expected error");
     } catch (IllegalArgumentException e) {
       final String value = "No handler for method [public abstract java.lang.String "
-          + "org.apache.calcite.test.RelMetadataTest$ColType.getColType(int)] "
-          + "applied to argument of type [interface org.apache.calcite.rel.RelNode]; "
-          + "we recommend you create a catch-all (RelNode) handler";
+          + "org.apache.calcite.test.RelMetadataTest$ColType$Handler.getColType("
+          + "org.apache.calcite.rel.RelNode,org.apache.calcite.rel.metadata.RelMetadataQuery,int)]"
+          + " applied to argument of type [class org.apache.calcite.rel.logical.LogicalFilter];"
+          + " we recommend you create a catch-all (RelNode) handler";
       assertThat(e.getMessage(), is(value));
     }
   }
 
+  @Deprecated // to be removed before 2.0
   public String colType(RelMetadataQuery mq, RelNode rel, int column) {
     return rel.metadata(ColType.class, mq).getColType(column);
   }
@@ -1540,6 +1604,7 @@ public class RelMetadataTest extends SqlToRelTestBase {
     return myRelMetadataQuery.colType(rel, column);
   }
 
+  @Deprecated // to be removed before 2.0
   @Test void testCustomProviderWithRelMetadataFactory() {
     final List<String> buf = new ArrayList<>();
     ColTypeImpl.THREAD_LIST.set(buf);
@@ -1582,7 +1647,7 @@ public class RelMetadataTest extends SqlToRelTestBase {
     // generates a new call to the provider.
     final RelOptPlanner planner = rel.getCluster().getPlanner();
     rel.getCluster().setMetadataProvider(
-        new CachingRelMetadataProvider(
+        new org.apache.calcite.rel.metadata.CachingRelMetadataProvider(
             rel.getCluster().getMetadataProvider(), planner));
     assertThat(colType(mq, input, 0), equalTo("DEPTNO-agg"));
     assertThat(buf.size(), equalTo(5));
@@ -1829,10 +1894,8 @@ public class RelMetadataTest extends SqlToRelTestBase {
 
       // Repeat the above tests directly against the handler.
       final RelMdColumnUniqueness handler =
-          (RelMdColumnUniqueness) RelMdColumnUniqueness.SOURCE
-              .handlers(BuiltInMetadata.ColumnUniqueness.DEF)
-              .get(BuiltInMethod.COLUMN_UNIQUENESS.method)
-              .iterator().next();
+          (RelMdColumnUniqueness) Iterables.getOnlyElement(RelMdColumnUniqueness.SOURCE
+              .handlers(BuiltInMetadata.ColumnUniqueness.Handler.class));
       assertThat(handler.areColumnsUnique(values, mq, col0, false),
           is(true));
       assertThat(handler.areColumnsUnique(values, mq, col1, false),
@@ -3433,6 +3496,7 @@ public class RelMetadataTest extends SqlToRelTestBase {
       implements MetadataHandler<ColType> {
     static final ThreadLocal<List<String>> THREAD_LIST = new ThreadLocal<>();
 
+    @Deprecated
     public MetadataDef<ColType> getDef() {
       return ColType.DEF;
     }
@@ -3453,7 +3517,7 @@ public class RelMetadataTest extends SqlToRelTestBase {
    * reflection. */
   public static class ColTypeImpl extends PartialColTypeImpl {
     public static final RelMetadataProvider SOURCE =
-        ReflectiveRelMetadataProvider.reflectiveSource(ColType.METHOD, new ColTypeImpl());
+        ReflectiveRelMetadataProvider.reflectiveSource(new ColTypeImpl(), ColType.Handler.class);
 
     /** Implementation of {@link ColType#getColType(int)} for
      * {@link RelNode}, called via reflection. */
@@ -3469,8 +3533,8 @@ public class RelMetadataTest extends SqlToRelTestBase {
   /** Implementation of {@link ColType} that has no fall-back for {@link RelNode}. */
   public static class BrokenColTypeImpl extends PartialColTypeImpl {
     public static final RelMetadataProvider SOURCE =
-        ReflectiveRelMetadataProvider.reflectiveSource(ColType.METHOD,
-            new BrokenColTypeImpl());
+        ReflectiveRelMetadataProvider.reflectiveSource(
+            new BrokenColTypeImpl(), ColType.Handler.class);
   }
 
   /** Extension to {@link RelMetadataQuery} to support {@link ColType}.
@@ -3488,7 +3552,7 @@ public class RelMetadataTest extends SqlToRelTestBase {
         try {
           return colTypeHandler.getColType(rel, this, column);
         } catch (JaninoRelMetadataProvider.NoHandler e) {
-          colTypeHandler = revise(e.relClass, ColType.DEF);
+          colTypeHandler = revise(ColType.Handler.class);
         }
       }
     }
@@ -3555,5 +3619,29 @@ public class RelMetadataTest extends SqlToRelTestBase {
       RelOptPlanner planner = new VolcanoPlanner();
       return rel.computeSelfCost(planner, mq);
     }
+
+    Sql assertRowsUnique(Matcher<Boolean> matcher, String reason) {
+      return assertRowsUnique(new boolean[] {false, true}, matcher, reason);
+    }
+
+    Sql assertRowsUnique(boolean ignoreNulls, Matcher<Boolean> matcher,
+        String reason) {
+      return assertRowsUnique(new boolean[] {ignoreNulls}, matcher, reason);
+    }
+
+    Sql assertRowsUnique(boolean[] ignoreNulls, Matcher<Boolean> matcher,
+        String reason) {
+      RelNode rel = convertSql(tester, sql);
+      final RelMetadataQuery mq = rel.getCluster().getMetadataQuery();
+      for (boolean ignoreNull : ignoreNulls) {
+        Boolean rowsUnique = mq.areRowsUnique(rel, ignoreNull);
+        assertThat(reason + "\n"
+                + "sql:" + sql + "\n"
+                + "plan:" + RelOptUtil.toString(rel, SqlExplainLevel.ALL_ATTRIBUTES),
+            rowsUnique, matcher);
+      }
+      return this;
+    }
+
   }
 }

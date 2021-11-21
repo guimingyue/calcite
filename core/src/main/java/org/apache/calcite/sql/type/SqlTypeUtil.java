@@ -837,7 +837,7 @@ public abstract class SqlTypeUtil {
             toType, fromType.getFieldList().get(0).getType(), coerce);
       } else if (toTypeName == SqlTypeName.ROW) {
         if (fromTypeName != SqlTypeName.ROW) {
-          return false;
+          return fromTypeName == SqlTypeName.NULL;
         }
         int n = toType.getFieldCount();
         if (fromType.getFieldCount() != n) {
@@ -1021,10 +1021,11 @@ public abstract class SqlTypeUtil {
    * @param type         type descriptor
    * @param charSetName  charSet name
    * @param maxPrecision The max allowed precision.
+   * @param maxScale     max allowed scale
    * @return corresponding parse representation
    */
   public static SqlDataTypeSpec convertTypeToSpec(RelDataType type,
-      @Nullable String charSetName, int maxPrecision) {
+      @Nullable String charSetName, int maxPrecision, int maxScale) {
     SqlTypeName typeName = type.getSqlTypeName();
 
     // TODO jvs 28-Dec-2004:  support row types, user-defined types,
@@ -1039,6 +1040,9 @@ public abstract class SqlTypeUtil {
         precision = maxPrecision;
       }
       int scale = typeName.allowsScale() ? type.getScale() : -1;
+      if (maxScale > 0 && scale > maxScale) {
+        scale = maxScale;
+      }
 
       typeNameSpec = new SqlBasicTypeNameSpec(
           typeName,
@@ -1084,7 +1088,7 @@ public abstract class SqlTypeUtil {
   public static SqlDataTypeSpec convertTypeToSpec(RelDataType type) {
     // TODO jvs 28-Dec-2004:  collation
     String charSetName = inCharFamily(type) ? type.getCharset().name() : null;
-    return convertTypeToSpec(type, charSetName, -1);
+    return convertTypeToSpec(type, charSetName, -1, -1);
   }
 
   public static RelDataType createMultisetType(

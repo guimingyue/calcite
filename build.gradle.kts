@@ -208,6 +208,7 @@ val sqllineClasspath by configurations.creating {
 
 dependencies {
     sqllineClasspath(platform(project(":bom")))
+    sqllineClasspath(project(":testkit"))
     sqllineClasspath("sqlline:sqlline")
     for (p in adaptersForSqlline) {
         sqllineClasspath(project(p))
@@ -301,7 +302,9 @@ allprojects {
 
     plugins.withId("java-library") {
         dependencies {
+            "annotationProcessor"(platform(project(":bom")))
             "implementation"(platform(project(":bom")))
+            "testAnnotationProcessor"(platform(project(":bom")))
         }
     }
 
@@ -311,10 +314,9 @@ allprojects {
         dependencies {
             val testImplementation by configurations
             val testRuntimeOnly by configurations
-            testImplementation("org.junit.jupiter:junit-jupiter-api")
-            testImplementation("org.junit.jupiter:junit-jupiter-params")
+            testImplementation(platform("org.junit:junit-bom"))
+            testImplementation("org.junit.jupiter:junit-jupiter")
             testImplementation("org.hamcrest:hamcrest")
-            testRuntimeOnly("org.junit.jupiter:junit-jupiter-engine")
             if (project.props.bool("junit4", default = false)) {
                 // Allow projects to opt-out of junit dependency, so they can be JUnit5-only
                 testImplementation("junit:junit")
@@ -490,7 +492,9 @@ allprojects {
         if (!skipAutostyle) {
             autostyle {
                 java {
-                    filter.exclude(*javaccGeneratedPatterns + "**/test/java/*.java")
+                    filter.exclude(*javaccGeneratedPatterns +
+                            "**/test/java/*.java" +
+                            "**/RelRule.java" /** remove as part of CALCITE-4831 **/)
                     license()
                     if (!project.props.bool("junit4", default = false)) {
                         replace("junit5: Test", "org.junit.Test", "org.junit.jupiter.api.Test")
@@ -575,6 +579,7 @@ allprojects {
         configure<CheckForbiddenApisExtension> {
             failOnUnsupportedJava = false
             ignoreSignaturesOfMissingClasses = true
+            suppressAnnotations.add("org.immutables.value.Generated")
             bundledSignatures.addAll(
                 listOf(
                     "jdk-unsafe",
@@ -601,6 +606,7 @@ allprojects {
                     disable(
                         "ComplexBooleanConstant",
                         "EqualsGetClass",
+                        "EqualsHashCode", // verified in Checkstyle
                         "OperatorPrecedence",
                         "MutableConstantField",
                         "ReferenceEquality",
@@ -718,6 +724,7 @@ allprojects {
                 passProperty("junit.jupiter.execution.timeout.default", "5 m")
                 passProperty("user.language", "TR")
                 passProperty("user.country", "tr")
+                passProperty("user.timezone", "UTC")
                 val props = System.getProperties()
                 for (e in props.propertyNames() as `java.util`.Enumeration<String>) {
                     if (e.startsWith("calcite.") || e.startsWith("avatica.")) {
@@ -774,11 +781,6 @@ allprojects {
             archiveClassifier.set("tests")
         }
 
-        val testSourcesJar by tasks.registering(Jar::class) {
-            from(sourceSets["test"].allJava)
-            archiveClassifier.set("test-sources")
-        }
-
         val sourcesJar by tasks.registering(Jar::class) {
             from(sourceSets["main"].allJava)
             archiveClassifier.set("sources")
@@ -789,18 +791,11 @@ allprojects {
             archiveClassifier.set("javadoc")
         }
 
-        val testClasses by configurations.creating {
-            extendsFrom(configurations["testRuntime"])
-        }
-
         val archives by configurations.getting
 
         // Parenthesis needed to use Project#getArtifacts
         (artifacts) {
-            testClasses(testJar)
             archives(sourcesJar)
-            archives(testJar)
-            archives(testSourcesJar)
         }
 
         val archivesBaseName = "calcite-$name"
